@@ -28,7 +28,7 @@
         tiles: [
           "assets/oceanandclouds/Ocean_4/2.png", // lower clouds
           "assets/shipnobg.png", // airship
-          "assets/oceanandclouds/Ocean_3/4.png", // upper clouds
+          "assets/oceanandclouds/Ocean_4/4.png", // upper clouds
         ],
       };
 
@@ -53,7 +53,7 @@
       }
 
       class CloudLayer {
-        constructor({ tile, size, y, speed, tint, renderOrder, waveAmplitude = 0, waveFrequency = 1 }) {
+        constructor({ tile, size, y, speed, tint, renderOrder, waveAmplitude = 0, waveFrequency = 1, yJitter = 0, scaleJitter = 0, seed = Math.random() * 997 }) {
           this.tile = tile;
           this.size = size;
           this.y = y;
@@ -64,6 +64,9 @@
           this.waveFrequency = waveFrequency;
           this.offset = 0;
           this.step = this.size.x;
+          this.yJitter = yJitter;
+          this.scaleJitter = scaleJitter;
+          this.seed = seed;
         }
 
         update() {
@@ -74,19 +77,30 @@
           }
         }
 
+        random(index, offset) {
+          const value = Math.sin(index * 127.1 + (this.seed + (offset || 0)) * 311.7) * 43758.5453;
+          return value - Math.floor(value);
+        }
+
         render() {
-          const width = this.size.x;
-          const height = this.size.y;
-          const viewHalfWidth = G.viewSize.x * 0.5;
-          const minX = cameraPos.x - viewHalfWidth;
-          const maxX = cameraPos.x + viewHalfWidth;
-          let drawX = minX - this.offset - width;
-          let iteration = 0;
-          while (drawX < maxX + width) {
-            const waveOffset = this.waveAmplitude ? Math.sin(time * this.waveFrequency + iteration * 0.6) * this.waveAmplitude : 0;
-            drawTile(vec2(drawX + width * 0.5, this.y + waveOffset), vec2(width, height), this.tile, this.tint);
-            drawX += width;
-            iteration++;
+          const baseWidth = this.size.x;
+          const baseHeight = this.size.y;
+          const halfView = G.viewSize.x * 0.5;
+          const minX = cameraPos.x - halfView;
+          const maxX = cameraPos.x + halfView;
+          const step = this.step;
+          let tileIndex = Math.floor((minX + this.offset) / step) - 1;
+          let drawX = tileIndex * step - this.offset;
+
+          while (drawX < maxX + step) {
+            const randScale = this.scaleJitter ? 1 + (this.random(tileIndex, 1) * 2 - 1) * this.scaleJitter : 1;
+            const width = baseWidth * randScale;
+            const height = baseHeight * randScale;
+            const yOffset = this.yJitter ? (this.random(tileIndex, 2) * 2 - 1) * this.yJitter : 0;
+            const waveOffset = this.waveAmplitude ? Math.sin(time * this.waveFrequency + tileIndex * 0.6) * this.waveAmplitude : 0;
+            drawTile(vec2(drawX + width * 0.5, this.y + yOffset + waveOffset), vec2(width, height), this.tile, this.tint);
+            drawX += step;
+            tileIndex++;
           }
         }
       }
@@ -141,6 +155,8 @@
             renderOrder: 2,
             waveAmplitude: 8,
             waveFrequency: 0.45,
+            yJitter: 150,
+            scaleJitter: 0.45,
           }),
         ];
 
