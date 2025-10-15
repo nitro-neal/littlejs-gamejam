@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>LittleJS Airship Demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/littlejsengine@1.14.19/dist/littlejs.min.js"></script>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0b1524;
+        font-family: system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      "use strict";
+
+      const CAMERA_SCALE = 0.75;
+
+      const G = {
+        width: 1408,
+        height: 736,
+        viewSize: vec2(1408, 736),
+        center: vec2(1408 * 0.5, 736 * 0.5),
+        tiles: [
+          "assets/oceanandclouds/Ocean_4/2.png", // lower clouds
+          "assets/shipnobg.png", // airship
+          "assets/oceanandclouds/Ocean_3/4.png", // upper clouds
+        ],
+      };
+
+      const TEXTURE_INDEX = {
+        lowerClouds: 0,
+        airship: 1,
+        upperClouds: 2,
+      };
+
+      const textureCache = {};
+      let cloudLayers = [];
+      let airship;
+
+      touchInputInit();
+
+      function makeCacheEntry(index) {
+        const info = textureInfos[index];
+        return {
+          tile: new TileInfo().setFullImage(info),
+          size: info.size.copy(),
+        };
+      }
+
+      class CloudLayer {
+        constructor({ tile, size, y, speed, tint, renderOrder, waveAmplitude = 0, waveFrequency = 1 }) {
+          this.tile = tile;
+          this.size = size;
+          this.y = y;
+          this.speed = speed;
+          this.tint = tint;
+          this.renderOrder = renderOrder;
+          this.waveAmplitude = waveAmplitude;
+          this.waveFrequency = waveFrequency;
+          this.offset = 0;
+          this.step = this.size.x;
+        }
+
+        update() {
+          this.offset += this.speed;
+          this.offset %= this.step;
+          if (this.offset < 0) {
+            this.offset += this.step;
+          }
+        }
+
+        render() {
+          const width = this.size.x;
+          const height = this.size.y;
+          const viewHalfWidth = G.viewSize.x * 0.5;
+          const minX = cameraPos.x - viewHalfWidth;
+          const maxX = cameraPos.x + viewHalfWidth;
+          let drawX = minX - this.offset - width;
+          let iteration = 0;
+          while (drawX < maxX + width) {
+            const waveOffset = this.waveAmplitude ? Math.sin(time * this.waveFrequency + iteration * 0.6) * this.waveAmplitude : 0;
+            drawTile(vec2(drawX + width * 0.5, this.y + waveOffset), vec2(width, height), this.tile, this.tint);
+            drawX += width;
+            iteration++;
+          }
+        }
+      }
+
+      class Airship {
+        constructor(tileInfo, size) {
+          this.tile = tileInfo;
+          this.size = size.copy();
+          this.pos = vec2(G.width * 0.5, G.height * 0.52);
+          this.baseY = this.pos.y;
+          this.hoverAmplitude = 18;
+          this.hoverSpeed = 1.1;
+          this.rollAmount = 0.015;
+          this.roll = 0;
+        }
+
+        update() {
+          const hover = Math.sin(time * this.hoverSpeed) * this.hoverAmplitude;
+          this.pos.y = this.baseY + hover;
+          this.roll = Math.sin(time * this.hoverSpeed * 0.6) * this.rollAmount;
+        }
+
+        render() {
+          drawTile(this.pos, this.size, this.tile, WHITE, this.roll);
+        }
+      }
+
+      function buildTextureCache() {
+        textureCache.lowerClouds = makeCacheEntry(TEXTURE_INDEX.lowerClouds);
+        textureCache.airship = makeCacheEntry(TEXTURE_INDEX.airship);
+        textureCache.upperClouds = makeCacheEntry(TEXTURE_INDEX.upperClouds);
+      }
+
+      function setupScene() {
+        cloudLayers = [
+          new CloudLayer({
+            tile: textureCache.lowerClouds.tile,
+            size: textureCache.lowerClouds.size.scale(1.8),
+            y: G.height * 0.72,
+            speed: -0.55,
+            tint: new Color(1, 1, 1, 0.68),
+            renderOrder: 0,
+            waveAmplitude: 12,
+            waveFrequency: 0.3,
+          }),
+          new CloudLayer({
+            tile: textureCache.upperClouds.tile,
+            size: textureCache.upperClouds.size.scale(1.6),
+            y: G.height * 0.34,
+            speed: -0.35,
+            tint: new Color(1, 1, 1, 0.85),
+            renderOrder: 2,
+            waveAmplitude: 8,
+            waveFrequency: 0.45,
+          }),
+        ];
+
+        airship = new Airship(textureCache.airship.tile, textureCache.airship.size);
+      }
+
+      function gameInit() {
+        const gameSize = vec2(G.width, G.height);
+        setCanvasFixedSize(gameSize);
+        setCanvasMaxSize(gameSize);
+        setCameraPos(G.center.copy());
+        cameraScale = CAMERA_SCALE;
+        G.viewSize = vec2(G.width / CAMERA_SCALE, G.height / CAMERA_SCALE);
+
+        buildTextureCache();
+        setupScene();
+      }
+
+      function gameUpdate() {
+        cloudLayers.forEach((layer) => layer.update());
+        airship.update();
+      }
+
+      function gameRender() {
+        const skyTop = new Color(0.47, 0.68, 0.98, 1);
+        const skyBottom = new Color(0.14, 0.22, 0.41, 1);
+        drawRectGradient(cameraPos.copy(), vec2(G.viewSize.x, G.viewSize.y), skyTop, skyBottom);
+
+        const backgroundLayers = cloudLayers.filter((layer) => layer.renderOrder <= 0);
+        const foregroundLayers = cloudLayers.filter((layer) => layer.renderOrder > 0);
+
+        backgroundLayers.forEach((layer) => layer.render());
+        airship.render();
+        foregroundLayers.forEach((layer) => layer.render());
+      }
+
+      function gameUpdatePost() {}
+      function gameRenderPost() {}
+
+      engineInit(gameInit, gameUpdate, gameUpdatePost, gameRender, gameRenderPost, G.tiles);
+    </script>
+  </body>
+</html>

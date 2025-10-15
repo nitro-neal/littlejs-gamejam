@@ -1,0 +1,17 @@
+{
+  "name": "littlejs-ski-tutorial",
+  "author": "Eoin McGrath",
+  "license": "MIT",
+  "meta_title": "Little Ski",
+  "description": "Super simple ski game plus tutorial. Built with LittleJS",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "start": "npm run dev",
+    "dev": "vite --host"
+  },
+  "devDependencies": {
+    "vite": "^6.0.5"
+  }
+}
