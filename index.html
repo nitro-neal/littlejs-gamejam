@@ -29,6 +29,11 @@
           "assets/oceanandclouds/Ocean_4/2.png", // lower clouds
           "assets/shipnobg.png", // airship
           "assets/oceanandclouds/Ocean_4/4.png", // upper clouds
+          "assets/dragon/idle/spritesheet.png", // dragon idle
+          "assets/dragon/walk_right/spritesheet.png", // dragon walk
+          "assets/dragon/run_right/spritesheet.png", // dragon run
+          "assets/dragon/jump_right/spritesheet.png", // dragon jump
+          "assets/dragon/custom/spritesheet.png", // dragon fire
         ],
       };
 
@@ -36,11 +41,96 @@
         lowerClouds: 0,
         airship: 1,
         upperClouds: 2,
+        dragonIdle: 3,
+        dragonWalk: 4,
+        dragonRun: 5,
+        dragonJump: 6,
+        dragonFire: 7,
       };
+
+      const DRAGON_HP_MAX = 1000;
+      const DRAGON_DAMAGE = { min: 1, max: 3 };
 
       const textureCache = {};
       let cloudLayers = [];
       let airship;
+      let dragon;
+      let crystalEmitter;
+      let crystalOffsetX = 0;
+      let crystalOffsetY = 0;
+      let crystalBasePos;
+      let powerUp;
+      let powerUpRespawnTimer = 0;
+      let enemies = [];
+let enemySpawnRate = 0;
+let enemySpawnAccumulator = 0;
+let nextEnemyDifficultyTime = 0;
+let screenFlashTimer = 0;
+let dragonHitTimer = 0;
+let dragonAttackCooldown = 0;
+let dragonHP = DRAGON_HP_MAX;
+let dragonScore = 0;
+let gameOver = false;
+
+      const dragonAnimations = {};
+
+      const FIXED_DT = 1 / 60;
+      const DRAGON_FRAME_SIZE = 512;
+const DRAGON_CONFIG = {
+        scale: 0.42,
+        walkSpeed: 220,
+        runSpeed: 340,
+        verticalSpeed: 180,
+        attackDuration: 0.6,
+        deckTop: 456,
+        deckBottom: 736,
+        deckLeft: 320,
+        deckRight: 1100,
+        hitboxWidthScale: 0.75,
+        hitboxHeightScale: 0.8,
+      };
+      const SHOW_DRAGON_BOUNDS = false;
+      const ENEMY_CONFIG = {
+        size: vec2(20, 20),
+        speed: 100,
+        verticalSpeed: 75,
+        acceleration: 9,
+        launchSpeedX: 540,
+        launchSpeedY: 720,
+        gravity: 1500,
+        maxCount: 1000,
+      };
+      const POWER_UP_SPAWN_RECT = {
+        center: vec2(777, 437),
+        halfSize: vec2(250, 150),
+      };
+      const ENEMY_DIFFICULTY = {
+        rampInterval: 10,
+        spawnRateStart: 5,
+        spawnRateMultiplier: 2,
+        spawnRateMax: 320,
+      };
+      const SHOW_SPAWN_RECT_DEBUG = false;
+      const SCREEN_FLASH_DURATION = 0.4;
+const DRAGON_HIT_FLASH_DURATION = 0.35;
+const DRAGON_ATTACK_CONFIG = {
+  killRadius: 160,
+  shockwaveRadius: 360,
+  pushSpeed: 520,
+  verticalPushScale: 0.6,
+  stunDuration: 0.6,
+  cooldown: 3,
+};
+
+      const POWER_UP_CONFIG = {
+        size: vec2(52, 52),
+        bobAmplitude: 26,
+        bobSpeed: 1.6,
+        collectRiseSpeed: 320,
+        collectDuration: 0.45,
+        respawnDelay: 3,
+        collisionScale: 1,
+      };
 
       touchInputInit();
 
@@ -50,6 +140,501 @@
           tile: new TileInfo().setFullImage(info),
           size: info.size.copy(),
         };
+      }
+
+function resetGameStats() {
+  dragonHP = DRAGON_HP_MAX;
+  dragonScore = 0;
+  gameOver = false;
+  screenFlashTimer = 0;
+  dragonHitTimer = 0;
+  dragonAttackCooldown = 0;
+}
+
+      function randomDragonDamage() {
+        return Math.floor(rand(DRAGON_DAMAGE.max + 1, DRAGON_DAMAGE.min));
+      }
+
+      function triggerGameOver() {
+        if (gameOver) {
+          return;
+        }
+        gameOver = true;
+        enemySpawnRate = 0;
+        enemySpawnAccumulator = 0;
+      }
+
+      function damageDragon() {
+        if (gameOver) {
+          return;
+        }
+        const damage = randomDragonDamage();
+        dragonHP = clamp(dragonHP - damage, 0, DRAGON_HP_MAX);
+        dragonHitTimer = DRAGON_HIT_FLASH_DURATION;
+        if (dragonHP <= 0) {
+          dragonHP = 0;
+          triggerGameOver();
+        }
+      }
+
+      function registerKill() {
+        dragonScore += 1;
+      }
+
+  function drawHUD() {
+    if (typeof overlayContext === "undefined") {
+      return;
+    }
+    const canvas = overlayContext.canvas || { width: G.width, height: G.height };
+    const canvasWidth = canvas.width || G.width;
+    const barWidth = 320;
+    const barHeight = 18;
+    const hpRatio = clamp(dragonHP / DRAGON_HP_MAX, 0, 1);
+    const barX = canvasWidth * 0.5 - barWidth * 0.5;
+    const barY = 16;
+    const cooldownHeight = 8;
+    const cooldownMax = DRAGON_ATTACK_CONFIG.cooldown || 1;
+    const cooldownRatio = cooldownMax > 0 ? clamp(1 - dragonAttackCooldown / cooldownMax, 0, 1) : 1;
+
+    overlayContext.save();
+    overlayContext.textBaseline = "top";
+    overlayContext.textAlign = "center";
+    overlayContext.fillStyle = "rgba(10, 14, 24, 0.65)";
+    overlayContext.fillRect(barX - 10, barY - 10, barWidth + 20, barHeight + 46 + cooldownHeight + 90);
+
+        overlayContext.fillStyle = "rgba(54, 58, 66, 0.9)";
+        overlayContext.fillRect(barX, barY, barWidth, barHeight);
+        overlayContext.fillStyle = "rgba(255, 198, 64, 0.98)";
+        overlayContext.fillRect(barX, barY, barWidth * hpRatio, barHeight);
+        overlayContext.lineWidth = 2;
+        overlayContext.strokeStyle = "rgba(255, 221, 128, 0.94)";
+        overlayContext.strokeRect(barX, barY, barWidth, barHeight);
+
+        overlayContext.font = "16px monospace";
+    overlayContext.fillStyle = "rgba(255, 255, 255, 0.96)";
+    overlayContext.fillText(`HP: ${Math.max(0, Math.floor(dragonHP))}/${DRAGON_HP_MAX}`, canvasWidth * 0.5, barY + barHeight + 8);
+    overlayContext.fillText(`Score: ${dragonScore}`, canvasWidth * 0.5, barY + barHeight + 28);
+
+    overlayContext.textBaseline = "top";
+    overlayContext.fillStyle = cooldownRatio >= 1 ? "rgba(120, 255, 160, 0.98)" : "rgba(255, 255, 255, 0.85)";
+    overlayContext.fillText(cooldownRatio >= 1 ? `Attack Ready` : `Attack Cooling`, canvasWidth * 0.5, barY + barHeight + 52);
+    overlayContext.fillStyle = "rgba(54, 58, 66, 0.9)";
+    overlayContext.fillRect(barX, barY + barHeight + 72, barWidth, cooldownHeight);
+    overlayContext.fillStyle = cooldownRatio >= 1 ? "rgba(96, 255, 124, 0.98)" : "rgba(255, 200, 64, 0.95)";
+    overlayContext.fillRect(barX, barY + barHeight + 72, barWidth * cooldownRatio, cooldownHeight);
+    overlayContext.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    overlayContext.strokeRect(barX, barY + barHeight + 72, barWidth, cooldownHeight);
+
+    if (gameOver) {
+      overlayContext.textAlign = "center";
+      overlayContext.fillStyle = "rgba(255, 80, 80, 0.95)";
+      overlayContext.font = "28px monospace";
+      overlayContext.fillText("GAME OVER", canvasWidth * 0.5, barY + barHeight + 100);
+      overlayContext.font = "18px monospace";
+      overlayContext.fillStyle = "rgba(255, 255, 255, 0.92)";
+      overlayContext.fillText("Press Space or Click to Restart", canvasWidth * 0.5, barY + barHeight + 128);
+      overlayContext.fillText(`Final Score: ${dragonScore}`, canvasWidth * 0.5, barY + barHeight + 150);
+    }
+
+        overlayContext.restore();
+      }
+
+      function triggerScreenFlash() {
+        screenFlashTimer = SCREEN_FLASH_DURATION;
+      }
+
+      function updateScreenFlash(dt) {
+        if (screenFlashTimer > 0) {
+          screenFlashTimer = Math.max(0, screenFlashTimer - dt);
+        }
+      }
+
+      function drawScreenFlash() {
+        if (screenFlashTimer <= 0 || typeof overlayContext === "undefined") {
+          return;
+        }
+        const canvas = overlayContext.canvas || { width: G.width, height: G.height };
+        const intensity = screenFlashTimer / SCREEN_FLASH_DURATION;
+        overlayContext.save();
+        overlayContext.fillStyle = `rgba(255, 255, 255, ${Math.min(0.75, intensity * 0.85)})`;
+        overlayContext.fillRect(0, 0, canvas.width || G.width, canvas.height || G.height);
+        overlayContext.restore();
+      }
+
+      function spawnPowerExplosion(position) {
+        const explosionPos = position ? position.copy ? position.copy() : vec2(position.x, position.y) : vec2(G.center.x, G.center.y);
+        const emitter = new ParticleEmitter(
+          explosionPos,
+          0,
+          vec2(14, 14),
+          0.16,
+          420,
+          Math.PI * 2,
+          undefined,
+          new Color(1, 1, 0.3, 1),
+          new Color(1, 0.45, 1, 0.95),
+          new Color(1, 0.9, 0.2, 0.12),
+          new Color(1, 0.2, 0.45, 0.06),
+          0.85,
+          20,
+          3,
+          360,
+          0.4,
+          0.88,
+          0.94,
+          -0.25,
+          0.3,
+          0.14,
+          0.32,
+          false,
+          true
+        );
+        emitter.renderOrder = 15;
+      }
+
+      function getDragonCenter(target) {
+        if (!target) {
+          return vec2(G.center.x, G.center.y);
+        }
+        return vec2(target.pos.x, target.pos.y - target.spriteSize.y * 0.5);
+      }
+
+      function spawnShockwaveRing(center) {
+        const emitter = new ParticleEmitter(
+          center,
+          0,
+          vec2(10, 10),
+          0.08,
+          300,
+          Math.PI * 2,
+          undefined,
+          new Color(1, 1, 0.35, 0.9),
+          new Color(1, 0.4, 1, 0.9),
+          new Color(1, 0.9, 0.25, 0.12),
+          new Color(1, 0.35, 0.85, 0.08),
+          0.4,
+          14,
+          2,
+          220,
+          0.25,
+          0.9,
+          0.96,
+          -0.3,
+          0.22,
+          0.08,
+          0.28,
+          false,
+          true
+        );
+        emitter.renderOrder = 13;
+      }
+
+      function applyDragonShockwave(target) {
+        if (!target) {
+          return;
+        }
+        const center = getDragonCenter(target);
+        spawnShockwaveRing(center);
+        const killRadiusSq = DRAGON_ATTACK_CONFIG.killRadius * DRAGON_ATTACK_CONFIG.killRadius;
+        const shockwaveRadiusSq = DRAGON_ATTACK_CONFIG.shockwaveRadius * DRAGON_ATTACK_CONFIG.shockwaveRadius;
+        let killed = 0;
+        enemies = enemies.filter((enemy) => {
+          const dx = enemy.pos.x - center.x;
+          const dy = enemy.pos.y - center.y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq <= killRadiusSq) {
+            killed++;
+            return false;
+          }
+          if (distSq <= shockwaveRadiusSq) {
+            const distance = Math.sqrt(distSq) || 1;
+            const nx = dx / distance;
+            const ny = dy / distance;
+            enemy.knockbackTimer = DRAGON_ATTACK_CONFIG.stunDuration;
+            enemy.velocity.x = nx * DRAGON_ATTACK_CONFIG.pushSpeed;
+            enemy.velocity.y = ny * DRAGON_ATTACK_CONFIG.pushSpeed * DRAGON_ATTACK_CONFIG.verticalPushScale;
+          }
+          return true;
+        });
+        if (killed) {
+          dragonScore += killed;
+        }
+      }
+
+      function activatePowerUp(target) {
+        if (gameOver) {
+          return;
+        }
+        if (target && typeof target.startPowerAttack === "function") {
+          target.startPowerAttack(false);
+        }
+        triggerScreenFlash();
+        if (target) {
+          spawnPowerExplosion(vec2(target.pos.x, target.pos.y - target.spriteSize.y * 0.4));
+        } else {
+          spawnPowerExplosion(vec2(G.center.x, G.center.y));
+        }
+        applyDragonShockwave(target);
+        if (enemies.length) {
+          dragonScore += enemies.length;
+          enemies = [];
+        }
+        enemySpawnAccumulator = 0;
+      }
+
+      const keyDown = (...keys) => keys.some((key) => keyIsDown(key));
+      const keyPressed = (...keys) => keys.some((key) => keyWasPressed(key));
+
+      function drawMouseCoordinates() {
+        if (typeof overlayContext === "undefined" || !mousePos) {
+          return;
+        }
+        const label = `Mouse: ${Math.round(mousePos.x)}, ${Math.round(mousePos.y)}`;
+        overlayContext.save();
+        overlayContext.font = "16px monospace";
+        overlayContext.textAlign = "left";
+        overlayContext.textBaseline = "top";
+        overlayContext.fillStyle = "rgba(12, 208, 255, 0.9)";
+        overlayContext.fillText(label, 14, 96);
+        overlayContext.restore();
+      }
+
+      function handleGameOverInput() {
+        if (!gameOver) {
+          return false;
+        }
+        if (keyPressed("Space") || mouseWasPressed(0)) {
+          setupScene();
+          return true;
+        }
+        return false;
+      }
+
+      function createDragonAnimations() {
+        const createFrames = (textureIndex) => {
+          const info = textureInfos[textureIndex];
+          const cols = Math.floor(info.size.x / DRAGON_FRAME_SIZE);
+          const rows = Math.floor(info.size.y / DRAGON_FRAME_SIZE);
+          const frameTotal = cols * rows;
+          const frames = [];
+          for (let i = 0; i < frameTotal; i++) {
+            frames.push(tile(i, DRAGON_FRAME_SIZE, textureIndex));
+          }
+          return frames;
+        };
+
+        dragonAnimations.idle = { frames: createFrames(TEXTURE_INDEX.dragonIdle), fps: 6, loop: true };
+        dragonAnimations.walk = { frames: createFrames(TEXTURE_INDEX.dragonWalk), fps: 10, loop: true };
+        dragonAnimations.run = { frames: createFrames(TEXTURE_INDEX.dragonRun), fps: 16, loop: true };
+        dragonAnimations.jump = { frames: createFrames(TEXTURE_INDEX.dragonJump), fps: 12, loop: true };
+        dragonAnimations.fire = { frames: createFrames(TEXTURE_INDEX.dragonFire), fps: 9, loop: false };
+      }
+
+      function createCrystalEmitter() {
+        if (!airship) {
+          return;
+        }
+        if (crystalEmitter) {
+          crystalEmitter.destroy();
+          crystalEmitter = undefined;
+          crystalBasePos = undefined;
+        }
+        crystalOffsetX = 100;
+        crystalOffsetY = DRAGON_CONFIG.deckBottom - airship.pos.y - 560;
+        const basePos = vec2(airship.pos.x + crystalOffsetX, airship.pos.y + crystalOffsetY);
+        const emissionAngle = 0;
+        const emissionCone = Math.PI * 2;
+        const glowStartA = new Color(0.3, 0.85, 1, 0.9);
+        const glowStartB = new Color(0.1, 0.6, 1, 0.75);
+        const glowEndA = new Color(0.05, 0.3, 0.9, 0.05);
+        const glowEndB = new Color(0.15, 0.65, 1, 0.1);
+        crystalEmitter = new ParticleEmitter(
+          basePos,
+          emissionAngle,
+          vec2(8, 8),
+          0,
+          240,
+          emissionCone,
+          undefined,
+          glowStartA,
+          glowStartB,
+          glowEndA,
+          glowEndB,
+          0.8,
+          14,
+          6,
+          60,
+          0.18,
+          0.6,
+          0.94,
+          0,
+          0.12,
+          0.18,
+          false,
+          true
+        );
+        crystalBasePos = vec2(basePos.x, basePos.y);
+      }
+
+      function resetEnemySpawnState() {
+        enemySpawnRate = ENEMY_DIFFICULTY.spawnRateStart;
+        enemySpawnAccumulator = 0;
+        nextEnemyDifficultyTime = ENEMY_DIFFICULTY.rampInterval;
+      }
+
+      function getBottomCenteredRect(position, size) {
+        const halfWidth = size.x * 0.5;
+        return {
+          left: position.x - halfWidth,
+          right: position.x + halfWidth,
+          bottom: position.y,
+          top: position.y - size.y,
+        };
+      }
+
+      function getDragonHitboxRect(target) {
+        const widthScale = DRAGON_CONFIG.hitboxWidthScale || 1;
+        const heightScale = DRAGON_CONFIG.hitboxHeightScale || 1;
+        const width = target.spriteSize.x * widthScale;
+        const height = target.spriteSize.y * heightScale;
+        const halfWidth = width * 0.5;
+        const bottom = target.pos.y;
+        const top = bottom - height;
+        return {
+          left: target.pos.x - halfWidth,
+          right: target.pos.x + halfWidth,
+          top,
+          bottom,
+        };
+      }
+
+      function rectsOverlap(a, b) {
+        return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+      }
+
+      function getRandomPointInRect(rect) {
+        const x = rand(rect.center.x + rect.halfSize.x, rect.center.x - rect.halfSize.x);
+        const y = rand(rect.center.y + rect.halfSize.y, rect.center.y - rect.halfSize.y);
+        return vec2(x, y);
+      }
+
+      function getRandomScreenPoint() {
+        const x = rand(G.width, 0);
+        const y = rand(G.height, 0);
+        return vec2(x, y);
+      }
+
+      function updateEnemyDifficulty() {
+        if (typeof time === "undefined") {
+          return;
+        }
+        while (time >= nextEnemyDifficultyTime) {
+          enemySpawnRate = clamp(enemySpawnRate * ENEMY_DIFFICULTY.spawnRateMultiplier, ENEMY_DIFFICULTY.spawnRateStart, ENEMY_DIFFICULTY.spawnRateMax);
+          nextEnemyDifficultyTime += ENEMY_DIFFICULTY.rampInterval;
+        }
+      }
+
+      function spawnEnemy() {
+        if (!dragon) {
+          return;
+        }
+        if (enemies.length >= ENEMY_CONFIG.maxCount) {
+          return;
+        }
+        const spawnPoint = getRandomScreenPoint();
+        enemies.push(new Enemy(spawnPoint));
+      }
+
+      function spawnEnemies(count) {
+        if (!count) {
+          return;
+        }
+        const available = Math.max(0, ENEMY_CONFIG.maxCount - enemies.length);
+        const totalToSpawn = Math.min(count, available);
+        for (let i = 0; i < totalToSpawn; i++) {
+          spawnEnemy();
+        }
+      }
+
+      function spawnPowerUp() {
+        const maxAttempts = 12;
+        let bestPoint = null;
+        let farthestDistSq = -1;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const candidate = POWER_UP_SPAWN_RECT ? getRandomPointInRect(POWER_UP_SPAWN_RECT) : getRandomScreenPoint();
+          if (dragon) {
+            const dragonCenter = getDragonCenter(dragon);
+            const dx = candidate.x - dragonCenter.x;
+            const dy = candidate.y - dragonCenter.y;
+            const distSq = dx * dx + dy * dy;
+            const minDist = Math.max(POWER_UP_CONFIG.size.x, POWER_UP_CONFIG.size.y) * 2.4;
+            if (distSq >= minDist * minDist) {
+              bestPoint = candidate;
+              break;
+            }
+            if (distSq > farthestDistSq) {
+              farthestDistSq = distSq;
+              bestPoint = candidate;
+            }
+          } else {
+            bestPoint = candidate;
+            break;
+          }
+        }
+        powerUp = new PowerUp(bestPoint || (POWER_UP_SPAWN_RECT ? getRandomPointInRect(POWER_UP_SPAWN_RECT) : getRandomScreenPoint()));
+      }
+
+      function updatePowerUp(dt) {
+        if (powerUp) {
+          const stillActive = powerUp.update(dt, dragon);
+          if (!stillActive) {
+            powerUpRespawnTimer = POWER_UP_CONFIG.respawnDelay;
+            powerUp = undefined;
+          }
+        } else if (powerUpRespawnTimer > 0) {
+          powerUpRespawnTimer = Math.max(0, powerUpRespawnTimer - dt);
+          if (powerUpRespawnTimer <= 0) {
+            spawnPowerUp();
+          }
+        }
+      }
+
+      function updateEnemies(dt) {
+        if (!dragon) {
+          return;
+        }
+
+        if (gameOver) {
+          enemies = enemies.filter((enemy) => enemy.update(dt));
+          return;
+        }
+
+        updateEnemyDifficulty();
+        if (enemySpawnRate > 0 && enemies.length < ENEMY_CONFIG.maxCount) {
+          enemySpawnAccumulator += dt * enemySpawnRate;
+          const spawnCount = Math.floor(enemySpawnAccumulator);
+          if (spawnCount > 0) {
+            enemySpawnAccumulator -= spawnCount;
+            spawnEnemies(spawnCount);
+          }
+        } else if (enemies.length >= ENEMY_CONFIG.maxCount) {
+          enemySpawnAccumulator = 0;
+        }
+
+        const dragonRect = getDragonHitboxRect(dragon);
+        enemies = enemies.filter((enemy) => {
+          const alive = enemy.update(dt);
+          if (alive && !enemy.launched && rectsOverlap(enemy.getRect(), dragonRect)) {
+            enemy.launch(dragon);
+            registerKill();
+            damageDragon();
+          }
+          return alive;
+        });
+      }
+
+      function renderEnemies() {
+        enemies.forEach((enemy) => enemy.render());
       }
 
       class CloudLayer {
@@ -105,11 +690,386 @@
         }
       }
 
+      class Enemy {
+        constructor(spawnPoint) {
+          this.size = ENEMY_CONFIG.size.copy();
+          const startPos =
+            spawnPoint && typeof spawnPoint.copy === "function"
+              ? spawnPoint.copy()
+              : spawnPoint
+              ? vec2(spawnPoint.x, spawnPoint.y)
+              : vec2(DRAGON_CONFIG.deckLeft, DRAGON_CONFIG.deckTop);
+          this.pos =
+            startPos && typeof startPos.copy === "function" ? startPos.copy() : vec2(startPos.x, startPos.y);
+          this.velocity = vec2();
+          this.color = new Color(1, 0.2, 0.2, 0.95);
+          this.launched = false;
+          this.rotation = 0;
+          this.spin = 0;
+          this.knockbackTimer = 0;
+        }
+
+        update(dt) {
+          if (this.launched) {
+            this.velocity.y -= ENEMY_CONFIG.gravity * dt;
+            this.pos.x += this.velocity.x * dt;
+            this.pos.y += this.velocity.y * dt;
+            this.rotation += this.spin * dt;
+            return !(
+              this.pos.x < -400 ||
+              this.pos.x > G.width + 400 ||
+              this.pos.y < -400 ||
+              this.pos.y > G.height + 600
+            );
+          }
+
+          if (this.knockbackTimer > 0) {
+            this.knockbackTimer = Math.max(0, this.knockbackTimer - dt);
+            this.pos.x += this.velocity.x * dt;
+            this.pos.y += this.velocity.y * dt;
+            const damp = clamp(5.5 * dt, 0, 1);
+            this.velocity.x = lerp(this.velocity.x, 0, damp);
+            this.velocity.y = lerp(this.velocity.y, 0, damp);
+            this.pos.x = clamp(this.pos.x, 0, G.width);
+            this.pos.y = clamp(this.pos.y, 0, G.height);
+            return true;
+          }
+
+          this.rotation = 0;
+          const directionToDragon = dragon.pos.x > this.pos.x ? 1 : -1;
+          const targetX = directionToDragon * ENEMY_CONFIG.speed;
+          this.velocity.x = lerp(this.velocity.x, targetX, clamp(ENEMY_CONFIG.acceleration * dt, 0, 1));
+
+          const deltaY = dragon.pos.y - this.pos.y;
+          const desiredY = clamp(deltaY, -ENEMY_CONFIG.verticalSpeed, ENEMY_CONFIG.verticalSpeed);
+          this.velocity.y = lerp(this.velocity.y, desiredY, clamp(ENEMY_CONFIG.acceleration * dt, 0, 1));
+
+          this.pos.x += this.velocity.x * dt;
+          this.pos.y += this.velocity.y * dt;
+
+          this.pos.x = clamp(this.pos.x, 0, G.width);
+          this.pos.y = clamp(this.pos.y, 0, G.height);
+          return true;
+        }
+
+        launch(target) {
+          if (this.launched) {
+            return;
+          }
+          this.launched = true;
+          const exitDir = this.pos.x < target.pos.x ? -1 : 1;
+          this.velocity.x = exitDir * ENEMY_CONFIG.launchSpeedX * rand(1.15, 0.85);
+          this.velocity.y = -ENEMY_CONFIG.launchSpeedY * rand(1.1, 0.8);
+          this.spin = rand(10, 4) * randSign();
+          this.color = new Color(1, 0.4, 0.4, 0.9);
+        }
+
+        getRect() {
+          return getBottomCenteredRect(this.pos, this.size);
+        }
+
+        render() {
+          const center = vec2(this.pos.x, this.pos.y - this.size.y * 0.5);
+          drawRect(center, this.size, this.color, this.rotation);
+        }
+      }
+
+      class PowerUp {
+        constructor(position) {
+          this.basePos = position && typeof position.copy === "function" ? position.copy() : vec2(position.x, position.y);
+          this.pos = this.basePos.copy();
+          this.size = POWER_UP_CONFIG.size.copy();
+          this.bobTimer = rand(Math.PI * 2, 0);
+          this.collecting = false;
+          this.collectTimer = 0;
+          this.emitter = this.createIdleEmitter();
+        }
+
+        createIdleEmitter() {
+          const idleColorA = new Color(1, 1, 0.15, 0.95);
+          const idleColorB = new Color(1, 0.35, 0.9, 0.95);
+          const idleEndA = new Color(1, 0.88, 0.18, 0.16);
+          const idleEndB = new Color(1, 0.5, 0.05, 0.12);
+          const emitPos = this.getVisualPos();
+        const emitter = new ParticleEmitter(
+          emitPos,
+          0,
+          vec2(5, 5),
+          0,
+          70,
+          Math.PI * 2,
+          undefined,
+          idleColorA,
+          idleColorB,
+          idleEndA,
+          idleEndB,
+          0.82,
+          6,
+          1.6,
+          34,
+          0,
+          0.9,
+          0.98,
+          -0.2,
+          0.24,
+          0.12,
+          0.18,
+          false,
+          true
+        );
+          emitter.renderOrder = 10;
+          return emitter;
+        }
+
+        createCollectEmitter() {
+          const pos = this.getVisualPos();
+          const emitter = new ParticleEmitter(
+            pos,
+            -Math.PI * 0.5,
+            vec2(5, 5),
+            POWER_UP_CONFIG.collectDuration,
+            220,
+            Math.PI * 0.9,
+            undefined,
+            new Color(1, 1, 0.25, 0.95),
+            new Color(1, 0.55, 1, 0.95),
+            new Color(1, 0.92, 0.2, 0.18),
+            new Color(1, 0.6, 0.08, 0.12),
+            POWER_UP_CONFIG.collectDuration,
+            9,
+            1.2,
+            260,
+            0.12,
+            0.9,
+            0.96,
+            -0.45,
+            0.14,
+            0.1,
+            0.22,
+            false,
+            true
+          );
+          emitter.renderOrder = 12;
+          return emitter;
+        }
+
+        getVisualOffset() {
+          return Math.sin(this.bobTimer) * POWER_UP_CONFIG.bobAmplitude * (this.collecting ? 0.25 : 1);
+        }
+
+        getVisualPos() {
+          return vec2(this.pos.x, this.pos.y + this.getVisualOffset());
+        }
+
+        getCollisionRect() {
+          const halfWidth = this.size.x * 0.5 * POWER_UP_CONFIG.collisionScale;
+          return {
+            left: this.pos.x - halfWidth,
+            right: this.pos.x + halfWidth,
+            bottom: this.pos.y,
+            top: this.pos.y - this.size.y * POWER_UP_CONFIG.collisionScale,
+          };
+        }
+
+        update(dt, target) {
+          if (this.collecting) {
+            this.collectTimer += dt;
+            this.pos.y -= POWER_UP_CONFIG.collectRiseSpeed * dt;
+            if (this.emitter) {
+              this.emitter.pos.set(this.pos.x, this.pos.y);
+            }
+            if (this.collectTimer >= POWER_UP_CONFIG.collectDuration) {
+              this.destroyEmitter();
+              return false;
+            }
+            return true;
+          }
+
+          this.bobTimer += dt * POWER_UP_CONFIG.bobSpeed;
+          const visualPos = this.getVisualPos();
+          if (this.emitter) {
+            this.emitter.pos.set(visualPos.x, visualPos.y);
+          }
+
+          if (target) {
+            const dragonRect = getBottomCenteredRect(target.pos, target.spriteSize);
+            if (rectsOverlap(this.getCollisionRect(), dragonRect)) {
+              this.collect(target);
+            }
+          }
+          return true;
+        }
+
+        collect(target) {
+          if (this.collecting) {
+            return;
+          }
+          this.collecting = true;
+          this.collectTimer = 0;
+          this.destroyEmitter();
+          this.emitter = this.createCollectEmitter();
+          activatePowerUp(target);
+        }
+
+        render() {
+          if (this.collecting) {
+            return;
+          }
+          const center = vec2(this.pos.x, this.pos.y - this.size.y * 0.5 + this.getVisualOffset());
+          const outerSize = vec2(this.size.x * 0.55, this.size.y * 0.55);
+          const innerSize = vec2(this.size.x * 0.32, this.size.y * 0.32);
+          drawRect(center, outerSize, new Color(1, 1, 0.25, 0.45));
+          drawRect(center, innerSize, new Color(1, 0.45, 0.95, 0.9));
+        }
+
+        destroyEmitter() {
+          if (this.emitter) {
+            this.emitter.destroy();
+            this.emitter = undefined;
+          }
+        }
+      }
+
+      class Dragon {
+        constructor() {
+          this.scale = DRAGON_CONFIG.scale;
+          this.spriteSize = vec2(DRAGON_FRAME_SIZE * this.scale, DRAGON_FRAME_SIZE * this.scale);
+          this.pos = vec2(G.center.x, (DRAGON_CONFIG.deckTop + DRAGON_CONFIG.deckBottom) * 0.5);
+          this.velocity = vec2();
+          this.state = "idle";
+          this.animTimer = 0;
+          this.frameIndex = 0;
+          this.facing = 1;
+          this.attackTimer = 0;
+        }
+
+        update() {
+          const dt = FIXED_DT;
+          if (gameOver) {
+            this.setState("idle");
+            this.advanceAnimation(dt);
+            return;
+          }
+          const horizontalInput = (keyDown("KeyD", "ArrowRight") ? 1 : 0) - (keyDown("KeyA", "ArrowLeft") ? 1 : 0);
+          const upPressed = keyDown("KeyW", "ArrowUp");
+          const downPressed = keyDown("KeyS", "ArrowDown");
+          const verticalInput = (upPressed ? 1 : 0) - (downPressed ? 1 : 0);
+          const running = keyDown("ShiftLeft", "ShiftRight");
+          const firePressed = keyPressed("Space");
+
+          const moveSpeed = running ? DRAGON_CONFIG.runSpeed : DRAGON_CONFIG.walkSpeed;
+          this.velocity.x = horizontalInput * moveSpeed;
+
+          if (horizontalInput) {
+            this.facing = horizontalInput > 0 ? 1 : -1;
+          }
+
+          this.pos.x += this.velocity.x * dt;
+          this.pos.x = clamp(this.pos.x, DRAGON_CONFIG.deckLeft, DRAGON_CONFIG.deckRight);
+
+          this.velocity.y = verticalInput * DRAGON_CONFIG.verticalSpeed;
+          if (verticalInput) {
+            this.pos.y += this.velocity.y * dt;
+          } else {
+            this.velocity.y = 0;
+          }
+          this.pos.y = clamp(this.pos.y, DRAGON_CONFIG.deckTop, DRAGON_CONFIG.deckBottom);
+
+          if (firePressed && this.attackTimer <= 0 && dragonAttackCooldown <= 0) {
+            this.startPowerAttack();
+          } else if (this.attackTimer > 0) {
+            this.attackTimer = Math.max(0, this.attackTimer - dt);
+            if (this.attackTimer === 0) {
+              this.setMovementState(running, verticalInput);
+            }
+          } else {
+            this.setMovementState(running, verticalInput);
+          }
+
+          this.advanceAnimation(dt);
+        }
+
+        setMovementState(running, verticalInput) {
+          const movingHoriz = Math.abs(this.velocity.x) > 1;
+          const movingVert = Math.abs(verticalInput) > 0;
+          if (movingHoriz || movingVert) {
+            this.setState(running && movingHoriz ? "run" : "walk");
+          } else {
+            this.setState("idle");
+          }
+        }
+
+        setState(state) {
+          if (this.state === state) {
+            return;
+          }
+          this.state = state;
+          this.animTimer = 0;
+          this.frameIndex = 0;
+        }
+
+        startPowerAttack(triggerShockwave = true) {
+          if (gameOver) {
+            return;
+          }
+          this.setState("fire");
+          this.attackTimer = DRAGON_CONFIG.attackDuration;
+          this.attackFacing = this.facing;
+          dragonAttackCooldown = DRAGON_ATTACK_CONFIG.cooldown;
+          if (triggerShockwave) {
+            applyDragonShockwave(this);
+          }
+        }
+
+        advanceAnimation(dt) {
+          const animation = dragonAnimations[this.state] || dragonAnimations.idle;
+          if (!animation || !animation.frames.length) {
+            return;
+          }
+
+          const frameDuration = 1 / animation.fps;
+          const totalDuration = frameDuration * animation.frames.length;
+
+          this.animTimer += dt;
+          if (animation.loop) {
+            this.animTimer %= totalDuration;
+          } else if (this.animTimer > totalDuration) {
+            this.animTimer = totalDuration;
+          }
+
+          let frame = Math.floor(this.animTimer / frameDuration);
+          if (animation.loop) {
+            frame %= animation.frames.length;
+          } else {
+            frame = Math.min(frame, animation.frames.length - 1);
+          }
+          this.frameIndex = clamp(frame, 0, animation.frames.length - 1);
+        }
+
+        render() {
+          const animation = dragonAnimations[this.state] || dragonAnimations.idle;
+          if (!animation || !animation.frames.length) {
+            return;
+          }
+          const tileInfo = animation.frames[this.frameIndex] || animation.frames[0];
+          const center = vec2(this.pos.x, this.pos.y - this.spriteSize.y * 0.5);
+          const attackFacing = this.state === "fire" && typeof this.attackFacing === "number" ? this.attackFacing : this.facing;
+          const facingFlip = this.state === "fire" ? attackFacing !== -1 : attackFacing === -1;
+          drawTile(center, this.spriteSize, tileInfo, WHITE, 0, facingFlip);
+          if (dragonHitTimer > 0) {
+            const flashAlpha = clamp(0.45 + 0.35 * Math.sin(time * 45), 0.15, 0.8);
+            const overlayInfo = tileInfo;
+            drawTile(center, this.spriteSize, overlayInfo, new Color(1, 1, 1, flashAlpha), 0, this.facing === -1);
+          }
+        }
+      }
+
       class Airship {
         constructor(tileInfo, size) {
           this.tile = tileInfo;
           this.size = size.copy();
           this.pos = vec2(G.width * 0.5, G.height * 0.52);
+          this.baseX = this.pos.x;
           this.baseY = this.pos.y;
           this.hoverAmplitude = 18;
           this.hoverSpeed = 1.1;
@@ -132,6 +1092,7 @@
         textureCache.lowerClouds = makeCacheEntry(TEXTURE_INDEX.lowerClouds);
         textureCache.airship = makeCacheEntry(TEXTURE_INDEX.airship);
         textureCache.upperClouds = makeCacheEntry(TEXTURE_INDEX.upperClouds);
+        createDragonAnimations();
       }
 
       function setupScene() {
@@ -161,6 +1122,14 @@
         ];
 
         airship = new Airship(textureCache.airship.tile, textureCache.airship.size);
+        dragon = new Dragon();
+        createCrystalEmitter();
+        enemies = [];
+        resetEnemySpawnState();
+        resetGameStats();
+        powerUp = undefined;
+        powerUpRespawnTimer = 0;
+        spawnPowerUp();
       }
 
       function gameInit() {
@@ -178,6 +1147,34 @@
       function gameUpdate() {
         cloudLayers.forEach((layer) => layer.update());
         airship.update();
+        updateScreenFlash(FIXED_DT);
+        if (dragonHitTimer > 0) {
+          dragonHitTimer = Math.max(0, dragonHitTimer - FIXED_DT);
+        }
+        if (dragonAttackCooldown > 0) {
+          dragonAttackCooldown = Math.max(0, dragonAttackCooldown - FIXED_DT);
+        }
+
+        if (gameOver && handleGameOverInput()) {
+          return;
+        }
+
+        if (dragon) {
+          dragon.update();
+        }
+
+        if (!gameOver) {
+          updatePowerUp(FIXED_DT);
+        }
+        updateEnemies(FIXED_DT);
+
+        if (crystalEmitter) {
+          const offsetX = airship.pos.x - airship.baseX;
+          const offsetY = airship.pos.y - airship.baseY;
+          const targetX = (crystalBasePos ? crystalBasePos.x : airship.pos.x + crystalOffsetX) + offsetX;
+          const targetY = (crystalBasePos ? crystalBasePos.y : airship.pos.y + crystalOffsetY) + offsetY;
+          crystalEmitter.pos.set(targetX, targetY);
+        }
       }
 
       function gameRender() {
@@ -190,11 +1187,42 @@
 
         backgroundLayers.forEach((layer) => layer.render());
         airship.render();
+        renderEnemies();
+        if (powerUp) {
+          powerUp.render();
+        }
+        if (dragon) {
+          dragon.render();
+        }
         foregroundLayers.forEach((layer) => layer.render());
       }
 
       function gameUpdatePost() {}
-      function gameRenderPost() {}
+      function gameRenderPost() {
+        drawScreenFlash();
+        drawHUD();
+        drawMouseCoordinates();
+        if (!SHOW_DRAGON_BOUNDS && !SHOW_SPAWN_RECT_DEBUG) {
+          return;
+        }
+        if (SHOW_SPAWN_RECT_DEBUG && POWER_UP_SPAWN_RECT) {
+          const spawnSize = vec2(POWER_UP_SPAWN_RECT.halfSize.x * 2, POWER_UP_SPAWN_RECT.halfSize.y * 2);
+          const spawnFill = new Color(1, 0.35, 0.08, 0.12);
+          const spawnEdge = new Color(1, 0.5, 0.15, 0.45);
+          drawRect(POWER_UP_SPAWN_RECT.center, spawnSize, spawnFill);
+          drawRect(POWER_UP_SPAWN_RECT.center, vec2(spawnSize.x, 3), spawnEdge);
+          drawRect(POWER_UP_SPAWN_RECT.center, vec2(3, spawnSize.y), spawnEdge);
+        }
+        if (SHOW_DRAGON_BOUNDS) {
+          const boundsCenter = vec2((DRAGON_CONFIG.deckLeft + DRAGON_CONFIG.deckRight) * 0.5, (DRAGON_CONFIG.deckTop + DRAGON_CONFIG.deckBottom) * 0.5);
+          const boundsSize = vec2(DRAGON_CONFIG.deckRight - DRAGON_CONFIG.deckLeft, DRAGON_CONFIG.deckBottom - DRAGON_CONFIG.deckTop);
+          const fillColor = new Color(0.2, 0.9, 1, 0.1);
+          const edgeColor = new Color(0.2, 0.9, 1, 0.35);
+          drawRect(boundsCenter, boundsSize, fillColor);
+          drawRect(boundsCenter, vec2(boundsSize.x, 2), edgeColor);
+          drawRect(boundsCenter, vec2(2, boundsSize.y), edgeColor);
+        }
+      }
 
       engineInit(gameInit, gameUpdate, gameUpdatePost, gameRender, gameRenderPost, G.tiles);
     </script>
