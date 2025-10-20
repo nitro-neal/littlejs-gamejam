@@ -34,6 +34,15 @@
           "assets/dragon/run_right/spritesheet.png", // dragon run
           "assets/dragon/jump_right/spritesheet.png", // dragon jump
           "assets/dragon/custom/spritesheet.png", // dragon fire
+          "assets/materia/spritesheet.png", // materia
+          "assets/angron_run/spritesheet.png", // angron run
+          "assets/schwewetasdf_run/spritesheet.png",
+          "assets/oifsdoidsf_run/spritesheet.png",
+          "assets/good_boy_run/spritesheet.png",
+          "assets/yee_run/spritesheet.png",
+          "assets/cool_guy_run/spritesheet.png",
+          "assets/capeboi_run/spritesheet.png",
+          "assets/princesss_run/spritesheet.png",
         ],
       };
 
@@ -46,7 +55,27 @@
         dragonRun: 5,
         dragonJump: 6,
         dragonFire: 7,
+        materia: 8,
+        angronRun: 9,
+        schwewetasdfRun: 10,
+        oifsdoidsfRun: 11,
+        goodBoyRun: 12,
+        yeeRun: 13,
+        coolGuyRun: 14,
+        capeboiRun: 15,
+        princesssRun: 16,
       };
+
+      const ENEMY_TEXTURES = [
+        TEXTURE_INDEX.angronRun,
+        TEXTURE_INDEX.schwewetasdfRun,
+        TEXTURE_INDEX.oifsdoidsfRun,
+        TEXTURE_INDEX.goodBoyRun,
+        TEXTURE_INDEX.yeeRun,
+        TEXTURE_INDEX.coolGuyRun,
+        TEXTURE_INDEX.capeboiRun,
+        TEXTURE_INDEX.princesssRun,
+      ];
 
       const DRAGON_HP_MAX = 1000;
       const DRAGON_DAMAGE = { min: 1, max: 3 };
@@ -91,12 +120,12 @@ const DRAGON_CONFIG = {
       };
       const SHOW_DRAGON_BOUNDS = false;
       const ENEMY_CONFIG = {
-        size: vec2(20, 20),
+        size: vec2(60, 60),
         speed: 100,
         verticalSpeed: 75,
         acceleration: 9,
-        launchSpeedX: 540,
-        launchSpeedY: 720,
+        launchSpeedX: 270,
+        launchSpeedY: 360,
         gravity: 1500,
         maxCount: 1000,
       };
@@ -123,7 +152,7 @@ const DRAGON_ATTACK_CONFIG = {
 };
 
       const POWER_UP_CONFIG = {
-        size: vec2(52, 52),
+        size: vec2(156, 156),
         bobAmplitude: 26,
         bobSpeed: 1.6,
         collectRiseSpeed: 320,
@@ -369,11 +398,6 @@ function resetGameStats() {
           target.startPowerAttack(false);
         }
         triggerScreenFlash();
-        if (target) {
-          spawnPowerExplosion(vec2(target.pos.x, target.pos.y - target.spriteSize.y * 0.4));
-        } else {
-          spawnPowerExplosion(vec2(G.center.x, G.center.y));
-        }
         applyDragonShockwave(target);
         if (enemies.length) {
           dragonScore += enemies.length;
@@ -702,11 +726,23 @@ function resetGameStats() {
           this.pos =
             startPos && typeof startPos.copy === "function" ? startPos.copy() : vec2(startPos.x, startPos.y);
           this.velocity = vec2();
-          this.color = new Color(1, 0.2, 0.2, 0.95);
           this.launched = false;
           this.rotation = 0;
           this.spin = 0;
           this.knockbackTimer = 0;
+
+          const textureIndex = ENEMY_TEXTURES[Math.floor(rand(ENEMY_TEXTURES.length))];
+          const frames = [];
+          const info = textureInfos[textureIndex];
+          const cols = Math.floor(info.size.x / 256);
+          const rows = Math.floor(info.size.y / 256);
+          const frameCount = cols * rows;
+          for (let i = 0; i < frameCount; i++) {
+            frames.push(tile(i, 256, textureIndex));
+          }
+          this.animation = { frames, fps: 12, loop: true };
+          this.animTimer = 0;
+          this.frameIndex = 0;
         }
 
         update(dt) {
@@ -749,6 +785,12 @@ function resetGameStats() {
 
           this.pos.x = clamp(this.pos.x, 0, G.width);
           this.pos.y = clamp(this.pos.y, 0, G.height);
+
+          const frameDuration = 1 / this.animation.fps;
+          const totalDuration = frameDuration * this.animation.frames.length;
+          this.animTimer = (this.animTimer + dt) % totalDuration;
+          this.frameIndex = Math.floor(this.animTimer / frameDuration);
+
           return true;
         }
 
@@ -757,11 +799,10 @@ function resetGameStats() {
             return;
           }
           this.launched = true;
-          const exitDir = this.pos.x < target.pos.x ? -1 : 1;
-          this.velocity.x = exitDir * ENEMY_CONFIG.launchSpeedX * rand(1.15, 0.85);
-          this.velocity.y = -ENEMY_CONFIG.launchSpeedY * rand(1.1, 0.8);
+          const launchAngle = rand(2 * Math.PI);
+          this.velocity.x = Math.cos(launchAngle) * ENEMY_CONFIG.launchSpeedX * rand(1.15, 0.85);
+          this.velocity.y = Math.sin(launchAngle) * ENEMY_CONFIG.launchSpeedY * rand(1.1, 0.8);
           this.spin = rand(10, 4) * randSign();
-          this.color = new Color(1, 0.4, 0.4, 0.9);
         }
 
         getRect() {
@@ -770,7 +811,8 @@ function resetGameStats() {
 
         render() {
           const center = vec2(this.pos.x, this.pos.y - this.size.y * 0.5);
-          drawRect(center, this.size, this.color, this.rotation);
+          const frame = this.animation.frames[this.frameIndex];
+          drawTile(center, this.size, frame, WHITE, this.rotation, this.velocity.x < 0);
         }
       }
 
@@ -782,75 +824,18 @@ function resetGameStats() {
           this.bobTimer = rand(Math.PI * 2, 0);
           this.collecting = false;
           this.collectTimer = 0;
-          this.emitter = this.createIdleEmitter();
-        }
 
-        createIdleEmitter() {
-          const idleColorA = new Color(1, 1, 0.15, 0.95);
-          const idleColorB = new Color(1, 0.35, 0.9, 0.95);
-          const idleEndA = new Color(1, 0.88, 0.18, 0.16);
-          const idleEndB = new Color(1, 0.5, 0.05, 0.12);
-          const emitPos = this.getVisualPos();
-        const emitter = new ParticleEmitter(
-          emitPos,
-          0,
-          vec2(5, 5),
-          0,
-          70,
-          Math.PI * 2,
-          undefined,
-          idleColorA,
-          idleColorB,
-          idleEndA,
-          idleEndB,
-          0.82,
-          6,
-          1.6,
-          34,
-          0,
-          0.9,
-          0.98,
-          -0.2,
-          0.24,
-          0.12,
-          0.18,
-          false,
-          true
-        );
-          emitter.renderOrder = 10;
-          return emitter;
-        }
-
-        createCollectEmitter() {
-          const pos = this.getVisualPos();
-          const emitter = new ParticleEmitter(
-            pos,
-            -Math.PI * 0.5,
-            vec2(5, 5),
-            POWER_UP_CONFIG.collectDuration,
-            220,
-            Math.PI * 0.9,
-            undefined,
-            new Color(1, 1, 0.25, 0.95),
-            new Color(1, 0.55, 1, 0.95),
-            new Color(1, 0.92, 0.2, 0.18),
-            new Color(1, 0.6, 0.08, 0.12),
-            POWER_UP_CONFIG.collectDuration,
-            9,
-            1.2,
-            260,
-            0.12,
-            0.9,
-            0.96,
-            -0.45,
-            0.14,
-            0.1,
-            0.22,
-            false,
-            true
-          );
-          emitter.renderOrder = 12;
-          return emitter;
+          const frames = [];
+          const info = textureInfos[TEXTURE_INDEX.materia];
+          const cols = Math.floor(info.size.x / 256);
+          const rows = Math.floor(info.size.y / 256);
+          const frameCount = cols * rows;
+          for (let i = 0; i < frameCount; i++) {
+            frames.push(tile(i, 256, TEXTURE_INDEX.materia));
+          }
+          this.animation = { frames, fps: 12, loop: true };
+          this.animTimer = 0;
+          this.frameIndex = 0;
         }
 
         getVisualOffset() {
@@ -875,21 +860,18 @@ function resetGameStats() {
           if (this.collecting) {
             this.collectTimer += dt;
             this.pos.y -= POWER_UP_CONFIG.collectRiseSpeed * dt;
-            if (this.emitter) {
-              this.emitter.pos.set(this.pos.x, this.pos.y);
-            }
             if (this.collectTimer >= POWER_UP_CONFIG.collectDuration) {
-              this.destroyEmitter();
               return false;
             }
             return true;
           }
 
           this.bobTimer += dt * POWER_UP_CONFIG.bobSpeed;
-          const visualPos = this.getVisualPos();
-          if (this.emitter) {
-            this.emitter.pos.set(visualPos.x, visualPos.y);
-          }
+
+          const frameDuration = 1 / this.animation.fps;
+          const totalDuration = frameDuration * this.animation.frames.length;
+          this.animTimer = (this.animTimer + dt) % totalDuration;
+          this.frameIndex = Math.floor(this.animTimer / frameDuration);
 
           if (target) {
             const dragonRect = getBottomCenteredRect(target.pos, target.spriteSize);
@@ -906,8 +888,6 @@ function resetGameStats() {
           }
           this.collecting = true;
           this.collectTimer = 0;
-          this.destroyEmitter();
-          this.emitter = this.createCollectEmitter();
           activatePowerUp(target);
         }
 
@@ -916,17 +896,8 @@ function resetGameStats() {
             return;
           }
           const center = vec2(this.pos.x, this.pos.y - this.size.y * 0.5 + this.getVisualOffset());
-          const outerSize = vec2(this.size.x * 0.55, this.size.y * 0.55);
-          const innerSize = vec2(this.size.x * 0.32, this.size.y * 0.32);
-          drawRect(center, outerSize, new Color(1, 1, 0.25, 0.45));
-          drawRect(center, innerSize, new Color(1, 0.45, 0.95, 0.9));
-        }
-
-        destroyEmitter() {
-          if (this.emitter) {
-            this.emitter.destroy();
-            this.emitter = undefined;
-          }
+          const frame = this.animation.frames[this.frameIndex];
+          drawTile(center, this.size, frame, WHITE);
         }
       }
 
